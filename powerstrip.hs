@@ -50,10 +50,13 @@ main = do
     argv <- getArgs
     either putStrLn execute $ parseArgs argv
 
+execute :: Arguments -> IO ()
 execute (Arguments d c p) = communicate d c p >>= (\x -> mapM_ (uncurry printStatus) $ zip p x)
 
+printStatus :: (Enum a, Show a1) => a -> a1 -> IO ()
 printStatus p s = putStrLn $ "Socket " ++ (show . fromEnum) p ++ " is " ++ show s
 
+communicate :: Enum a => String -> Command -> [a] -> IO [Status]
 communicate device cmd ports = withSerial device defaultSerialSettings (communicate' cmd ports)
 communicate' cmd ports serial = do
     when (cmd /= Status) $ mapM_ (\x -> send serial $ pack $ decideByteString cmd x) ports
