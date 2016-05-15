@@ -1,146 +1,62 @@
 #!/usr/bin/env python
 #
 # powerstrip controller
-# ver. 0.2
+# ver. 0.4
 
 import serial
 import sys
 import os.path
 
-def help():
-    print "powerstrip terminal controller"
-    print "usage: powerstrip status"
-    print "       powerstrip [up/down] [0/1/all]"
-    return 0
-
-def status():
-    if not os.path.exists(device):
-        print "Serial link not detected."
-        return 0
-
-    ser = serial.Serial(device, 9600, timeout=1)
-    ser.write("2")
-    socket_zero = ser.read()
-    ser.write("5")
-    socket_one = ser.read()
-    
-    print "status:"
-    print "0: socket zero (%s) is" % socket_zero_name,
-    if socket_zero == "0":
-        print "DOWN"
-    else:
-        print "UP"
-    print "1: socket one  (%s) is" % socket_one_name,
-    if socket_one == "0":
-        print "DOWN"
-    else:
-        print "UP"
-
-    ser.close()
-    return 0
-
-def power_up( socket ):
-    ser = serial.Serial(device, 9600, timeout=1)
-
-    if socket == "0":
-        ser.write("2")
-    elif socket == "1":
-        ser.write("5")
-    elif socket == "all":
-        ser.write("14")
-        print "All sockets powered UP."
-        return 0
-
-    status = ser.read()
-
-    if socket == "0":
-        socket_name = socket_zero_name
-    elif socket == "1":
-        socket_name = socket_one_name
-
-    if status == "0":
-        if socket == "0":
-            # power up bit
-            ser.write("1")
-            # status bit
-            ser.write("2")
-        elif socket == "1":
-            # power up bit
-            ser.write("4")
-            # status bit
-            ser.write("5")
-
-        status = ser.read()
-
-        if status == "1":
-            print "Socket " + socket + " (" + socket_name + ") powered UP."
-        else:
-            print "Powering up unsuccessful."
-
-    else:
-        print "Socket " + socket + " (" + socket_name + ") is already powered up."
-
-    ser.close()
-    return 0
-
-def power_down( socket ):        
-    ser = serial.Serial(device, 9600, timeout=1)
-
-    if socket == "0":
-        ser.write("2")
-    elif socket == "1":
-        ser.write("5")
-    elif socket == "all":
-        ser.write("03")
-        print "All sockets powered DOWN."
-        return 0
-
-    x = ser.read()
-
-    if socket == "0":
-        socket_name = socket_zero_name
-    elif socket == "1":
-        socket_name = socket_one_name
-
-    if x == "1":
-        if socket == "0":
-            ser.write("0")
-        elif socket == "1":
-            ser.write("3")
-
-        print "Socket " + socket + " (" + socket_name + ") powered DOWN."
-    else:
-        print "Socket " + socket + " (" + socket_name + ") already powered down."
-
-    ser.close()
-    return 0
-
-def main(argv):
-    if len(argv) == 0:
-	status()
-    elif len(argv) == 1:
-        if argv[0] == "status":
-            status()
-        else:
-            help()
-    elif len(argv) == 2:
-        if argv[1] == "0" or argv[1] == "1" or argv[1] == "all":
-            if argv[0] == "up":
-                power_up(argv[1])
-            elif argv[0] == "down":
-                power_down(argv[1])
-            else:
-                #print "1st arg not up or down"
-                help()
-        else:
-            #print "2nd arg not 0 or 1"
-            help()
-            
-    else:
-        #print "illegal no of args"
-        help()
+import filelock
 
 device = "/dev/ttyUSB0"
-socket_zero_name = "Seagate External HDD"
-socket_one_name = "iPhone AC Charger"
-main(sys.argv[1:])
+
+def help():
+    return "usage: powerstrip [status/up/down] [0/1/all]"
+
+def status(ser, port):
+    thebits = [ "2", "5" ]
+    mybits = thebits if port == "all" else [ thebits[int(port)] ]
+
+    for bit in mybits:
+        ser.write(bit)
+        status = ser.read()
+        print("off" if status == "0" else "on")
+
+def power(ser, cmd, socket):
+    thebits = {
+        "down" : { "0" : "0", "1" : "3", "all" : "03" },
+        "up"   : { "0" : "1", "1" : "4", "all" : "14" } }
+    ser.write(thebits[cmd][socket])
+
+def main(argv):
+    funcs = {
+        "up" : lambda ser, port : power(ser, "up", port),
+        "down" : lambda ser, port : power(ser, "down", port),
+        "status" : status
+    }
+    args = [ "0", "1", "all" ]
+
+    lock = filelock.FileLock("/tmp/powerstrip-lock")
+
+    try:
+        if not os.path.exists(device):
+            raise EnvironmentError("Serial link not detected.")
+
+        if not (len(argv) == 2 and argv[0] in funcs and argv[1] in args):
+            raise RuntimeError("Invalid arguments.")
+
+        with lock.acquire(timeout = 10):
+            ser = serial.Serial(device, 9600, timeout=1)
+            funcs[argv[0]](ser, argv[1])
+            ser.close()
+
+    except filelock.Timeout, e:
+        print "Failed to acquire file lock."
+    except EnvironmentError, e:
+        print(str(e))
+    except RuntimeError, e:
+        print(help())
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
